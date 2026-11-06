@@ -1,0 +1,8 @@
+{
+  "name": "lescraft ai 2",
+  "description": "Generate music video treatments, scripts, and shot lists from music concepts and lyrics.",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}
