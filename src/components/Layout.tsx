@@ -1,12 +1,13 @@
 import React from 'react';
 import { Outlet, NavLink, useNavigate } from 'react-router-dom';
-import { Clapperboard, FileText, ListVideo, Sparkles, ArrowLeft, Plus, Camera, CalendarDays, Share2, Cpu } from 'lucide-react';
+import { Clapperboard, FileText, ListVideo, Sparkles, ArrowLeft, Plus, Camera, CalendarDays, Share2, Cpu, KeyRound } from 'lucide-react';
 import { useAppContext } from '../context';
 import { useAuth } from './auth/AuthProvider';
 import { useAiConfig } from '../lib/aiConfig';
 import ChatAssistant from './ChatAssistant';
 import LoginButton from './auth/LoginButton';
 import LogoutButton from './auth/LogoutButton';
+import AiKeySettings from './AiKeySettings';
 
 const SECTION_TABS = [
   { to: '/app/analysis', label: 'Analyse', icon: Sparkles },
@@ -18,10 +19,11 @@ const SECTION_TABS = [
 ] as const;
 
 export default function Layout() {
-  const { treatment, setTreatment, selectedModel, setSelectedModel } = useAppContext();
+  const { treatment, setTreatment, selectedModel, setSelectedModel, aiCredentials } = useAppContext();
   const { user, profile } = useAuth();
   const aiConfig = useAiConfig();
   const navigate = useNavigate();
+  const [showKeySettings, setShowKeySettings] = React.useState(false);
 
   const handleReset = () => {
     setTreatment(null);
@@ -63,6 +65,20 @@ export default function Layout() {
           )}
 
           <div className="flex items-center gap-3">
+            {/* Own API key */}
+            <button
+              onClick={() => setShowKeySettings(true)}
+              className={`flex items-center gap-2 text-xs transition-colors px-2.5 py-1.5 rounded-lg border ${
+                aiCredentials?.apiKey
+                  ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-300 hover:bg-emerald-500/20'
+                  : 'text-zinc-400 hover:text-zinc-200 border-zinc-800 hover:border-zinc-700'
+              }`}
+              title={aiCredentials?.apiKey ? 'Votre clé API est active' : 'Utiliser votre propre clé API'}
+            >
+              <KeyRound className="w-4 h-4" />
+              <span className="hidden sm:inline">{aiCredentials?.apiKey ? 'Ma clé' : 'Clé API'}</span>
+            </button>
+
             <div className="relative group/model">
               <button
                 className="flex items-center gap-2 text-xs text-zinc-400 hover:text-zinc-200 transition-colors px-2 py-1.5 hover:bg-zinc-900 rounded-lg border border-transparent hover:border-zinc-800"
@@ -145,6 +161,8 @@ export default function Layout() {
       </main>
 
       <ChatAssistant />
+
+      <AiKeySettings open={showKeySettings} onClose={() => setShowKeySettings(false)} />
     </div>
   );
 }

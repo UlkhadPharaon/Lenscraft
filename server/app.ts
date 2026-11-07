@@ -18,8 +18,11 @@ import { env, isProduction, isSupabaseConfigured } from './env';
 import { consumeGenerationQuota, getSupabaseAdmin, QuotaError, TIER_LIMITS, type ProfileRow } from './supabase-admin';
 import { rateLimit } from './rate-limit';
 import { STRIPE_TIERS, getStripe, isSupportedTier, toStripeAmount } from './stripe';
-import { generateStructuredJson, availableModels, currentProvider } from './ai';
+import { generateStructuredJson, availableModels, currentProvider, listModels, providerCatalog } from './ai';
 import { ASSISTANT_SCHEMA, PROMO_SCHEMA, TREATMENT_SCHEMA } from './schemas';
+import { appendSurveyResponse, readSurveyResponses, surveyStats } from './survey';
+import { surveyToCsv } from '../src/lib/survey';
+import type { SurveyResponse } from '../src/lib/survey';
 // Load .env before anything reads process.env.
 dotenv.config();
 dotenv.config({ path: '.env.local', override: true });
@@ -220,6 +223,9 @@ export async function createApp({ serveStatic = false }: { serveStatic?: boolean
       timestamp: new Date().toISOString(),
     });
   });
+  const apiLimiter = rateLimit({ windowMs: 60_000, max: 60, message: 'Trop de requêtes depuis votre appareil. Réessayez dans une minute.' });
+  const generateLimiter = rateLimit({ windowMs: 60_000, max: 10, message: 'Générations trop rapprochées. Patientez une minute avant de relancer.' });
+
 
   // ------------------------------------------------------------ public AI config
   // Lets the frontend model selector follow the configured provider.
@@ -230,11 +236,25 @@ export async function createApp({ serveStatic = false }: { serveStatic?: boolean
       currency: env.currency,
       billingEnabled: Boolean(getStripe()),
       upgradeEnabled: !Boolean(getStripe()) || !isSupabaseConfigured,
+      byokEnabled: true,
+      providers: providerCatalog(),
     });
   });
 
-  const apiLimiter = rateLimit({ windowMs: 60_000, max: 60, message: 'Trop de requêtes depuis votre appareil. Réessayez dans une minute.' });
-  const generateLimiter = rateLimit({ windowMs: 60_000, max: 10, message: 'Générations trop rapprochées. Patientez une minute avant de relancer.' });
+  // Lists the models available for a BYOK provider (filtered to audio + tools).
+  app.post('/api/models', apiLimiter, async (req, res) => {
+    try {
+      const providerId = String(req.body?.provider || '').toLowerCase();
+      const apiKey = typeof req.body?.apiKey === 'string' ? req.body.apiKey.trim() : '';
+      if (!providerId) return res.status(400).json({ error: 'Fournisseur requis.' });
+
+      const result = await listModels(providerId, apiKey || undefined);
+      res.json(result);
+    } catch (error: any) {
+      res.status(500).json({ error: error?.message || 'Liste des modèles indisponible.' });
+    }
+  });
+
 
   /**
    * Resolves the caller's user id (from the Authorization bearer token) and
@@ -268,7 +288,7 @@ export async function createApp({ serveStatic = false }: { serveStatic?: boolean
         return res.status(status).json({ error: quotaError?.message || 'Quota invalide.' });
       }
 
-      const { description, lyrics, audioBase64, audioMimeType, youtubeUrl, language, model } = req.body;
+      const { description, lyrics, audioBase64, audioMimeType, youtubeUrl, language, model, ai } = req.body;
 
       const promptText = `Tu es un réalisateur de clips vidéo visionnaire et un artiste visuel.
 Analyse le concept de la chanson, la structure lyrique, le fichier audio ou le lien YouTube fourni pour générer un dossier de production complet pour un clip vidéo.
@@ -289,6 +309,8 @@ ${lyrics ? lyrics : 'Non renseigné.'}`;
 
       const result = await generateStructuredJson({
         model,
+        provider: ai?.provider,
+        apiKey: typeof ai?.apiKey === 'string' ? ai.apiKey.trim() || undefined : undefined,
         systemPrompt: "Tu es un réalisateur de clips vidéo visionnaire et un artiste visuel. IMPORTANT: Ta réponse DOIT être entièrement rédigée en FRANÇAIS.",
         userPrompt: promptText,
         audio: audioBase64 && audioMimeType ? { data: audioBase64, mimeType: audioMimeType } : null,
@@ -317,7 +339,7 @@ ${lyrics ? lyrics : 'Non renseigné.'}`;
         return res.status(status).json({ error: quotaError?.message || 'Quota invalide.' });
       }
 
-      const { treatment, audioBase64, audioMimeType, preferences, model } = req.body;
+      const { treatment, audioBase64, audioMimeType, preferences, model, ai } = req.body;
 
       const prefLines = [
         `- Plateformes visées : ${Array.isArray(preferences?.platforms) && preferences.platforms.length ? preferences.platforms.join(', ') : 'TikTok, Reels et Shorts'}`,
@@ -347,6 +369,8 @@ Si l'utilisateur demande un nombre spécifique de vidéos (même grand, comme 10
 
       const result = await generateStructuredJson({
         model,
+        provider: ai?.provider,
+        apiKey: typeof ai?.apiKey === 'string' ? ai.apiKey.trim() || undefined : undefined,
         systemPrompt: "Tu es un stratège marketing digital et créateur de contenu viral. IMPORTANT: Ta réponse DOIT être entièrement rédigée en FRANÇAIS.",
         userPrompt: promptText,
         audio: audioBase64 && audioMimeType ? { data: audioBase64, mimeType: audioMimeType } : null,
@@ -367,8 +391,9 @@ Si l'utilisateur demande un nombre spécifique de vidéos (même grand, comme 10
   // ----------------------------------------------------- POST /api/assistant
   app.post("/api/assistant", apiLimiter, async (req, res) => {
     try {
-      const { treatment, message, model } = req.body;
-      const ai = createAI();
+      const { treatment, message, model, ai: byok } = req.body;
+      const providerOverride = byok?.provider;
+      const apiKeyOverride = typeof byok?.apiKey === 'string' ? byok.apiKey.trim() || undefined : undefined;
 
       const promptText = `Tu es l'assistant IA intégré de LensCraft. L'utilisateur veut modifier ou discuter de son projet de clip vidéo.
 IMPORTANT: Ta réponse DOIT être entièrement rédigée en FRANÇAIS.
@@ -382,6 +407,8 @@ Modifie le JSON comme demandé (ou améliore-le si l'utilisateur le demande) ET 
 
       const result = await generateStructuredJson({
         model,
+        provider: providerOverride,
+        apiKey: apiKeyOverride,
         systemPrompt: "Tu es l'assistant IA intégré de LensCraft. IMPORTANT: Ta réponse DOIT être entièrement rédigée en FRANÇAIS.",
         userPrompt: promptText,
         schema: ASSISTANT_SCHEMA,
@@ -490,6 +517,47 @@ Modifie le JSON comme demandé (ou améliore-le si l'utilisateur le demande) ET 
     } catch (error: any) {
       res.status(500).json({ error: error?.message || 'Changement de plan impossible.' });
     }
+  });
+
+  // ------------------------------------------------------- survey (market test)
+  app.post('/api/survey', apiLimiter, async (req, res) => {
+    try {
+      const { answers, source } = req.body || {};
+      if (!answers || typeof answers !== 'object') {
+        return res.status(400).json({ error: 'Réponses manquantes.' });
+      }
+
+      // Never trust the client for PII-heavy fields beyond what it sent.
+      const response: SurveyResponse = {
+        at: Date.now(),
+        source: String(source || 'direct').slice(0, 40),
+        answers,
+        device: String(req.headers['user-agent'] || '').slice(0, 200),
+      };
+
+      const stored = appendSurveyResponse(response);
+      res.json({ ok: true, stored });
+    } catch (error: any) {
+      res.status(500).json({ error: error?.message || 'Enregistrement impossible.' });
+    }
+  });
+
+  // Aggregated stats — safe to share, contains no personal data.
+  app.get('/api/survey/stats', (_req, res) => {
+    const responses = readSurveyResponses();
+    res.json({ stats: surveyStats(responses) });
+  });
+
+  // Raw export for analysis, guarded by a token when one is configured.
+  app.get('/api/survey/export', (req, res) => {
+    const token = process.env.SURVEY_TOKEN;
+    if (token && req.query.token !== token) {
+      return res.status(401).json({ error: 'Token requis.' });
+    }
+    const responses = readSurveyResponses();
+    res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+    res.setHeader('Content-Disposition', 'attachment; filename="lenscraft-survey.csv"');
+    res.send(surveyToCsv(responses));
   });
 
   // Unknown API routes must answer JSON, never fall through to the SPA.

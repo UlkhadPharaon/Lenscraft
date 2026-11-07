@@ -9,6 +9,10 @@ coverage/
 .env.*
 !.env.example
 
+# Local survey responses (market research data)
+data/
+*.jsonl
+
 # OS / editor
 .DS_Store
 *.log

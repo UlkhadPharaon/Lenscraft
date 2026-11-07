@@ -2,9 +2,16 @@ import React, { createContext, useContext, useState, useEffect, useCallback, use
 import { VideoTreatment } from './types';
 import { getSupabaseClient } from './lib/supabase';
 import { useAuth } from './components/auth/AuthProvider';
-import { setTokenProvider } from './utils/api';
+import { setTokenProvider, setCredentialsProvider } from './utils/api';
 
 export type AIModel = 'gemini-3.5-flash' | 'gemini-3.1-pro-preview' | 'qwen/qwen3.8-omni-flash' | 'qwen/qwen3.7-plus' | 'qwen/qwen3.7-max' | (string & {});
+
+/** BYOK (bring your own key) selection, persisted in the browser only. */
+export interface AiCredentials {
+  provider: string;
+  apiKey: string;
+  model: string;
+}
 
 export type SyncStatus = 'idle' | 'syncing' | 'synced' | 'error';
 
@@ -17,6 +24,10 @@ interface AppContextType {
   loadProject: (id: string) => void;
   /** Creates, saves and activates an empty (manually editable) dossier. */
   createBlankProject: () => VideoTreatment;
+  /** Bring-your-own-key credentials in use, if any. */
+  aiCredentials: AiCredentials | null;
+  /** Saves or clears the BYOK credentials and applies the chosen model. */
+  setAiCredentials: (credentials: AiCredentials | null) => void;
   selectedModel: AIModel;
   setSelectedModel: (model: AIModel) => void;
   /** True until projects have been loaded (cache + cloud). */
@@ -29,6 +40,9 @@ const AppContext = createContext<AppContextType | undefined>(undefined);
 
 const PROJECTS_KEY = 'lenscraft_projects';
 const MODEL_KEY = 'lenscraft_model';
+const AI_PROVIDER_KEY = 'lenscraft_ai_provider';
+const AI_KEY_KEY = 'lenscraft_ai_key';
+const AI_MODEL_KEY = 'lenscraft_ai_model';
 const ACTIVE_KEY_PREFIX = 'lenscraft_active_';
 
 /** Rough ceiling before we warn the user that localStorage is filling up. */
@@ -110,10 +124,56 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const [projectsLoading, setProjectsLoading] = useState(true);
   const [syncStatus, setSyncStatus] = useState<SyncStatus>('idle');
 
-  // Register the auth token provider used by src/utils/api.ts.
+  // Register the auth + BYOK providers used by src/utils/api.ts.
   useEffect(() => {
     setTokenProvider(getAccessToken);
   }, [getAccessToken]);
+
+  // ------------------------------------------------------ BYOK (own API key)
+  const [aiCredentials, setAiCredentialsState] = useState<AiCredentials | null>(null);
+
+  // Register the auth + BYOK providers used by src/utils/api.ts.
+  useEffect(() => {
+    setTokenProvider(getAccessToken);
+    setCredentialsProvider(() =>
+      aiCredentials?.apiKey ? { provider: aiCredentials.provider, apiKey: aiCredentials.apiKey } : null,
+    );
+  }, [getAccessToken, aiCredentials]);
+
+  useEffect(() => {
+    const storedProvider = localStorage.getItem(AI_PROVIDER_KEY);
+    const storedKey = localStorage.getItem(AI_KEY_KEY);
+    const storedModel = localStorage.getItem(AI_MODEL_KEY);
+    if (storedProvider && storedKey) {
+      setAiCredentialsState({ provider: storedProvider, apiKey: storedKey, model: storedModel || '' });
+      if (storedModel) setSelectedModel(storedModel as AIModel);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const setAiCredentials = useCallback((credentials: AiCredentials | null) => {
+    if (credentials?.apiKey) {
+      localStorage.setItem(AI_PROVIDER_KEY, credentials.provider);
+      localStorage.setItem(AI_KEY_KEY, credentials.apiKey);
+      if (credentials.model) {
+        localStorage.setItem(AI_MODEL_KEY, credentials.model);
+        setSelectedModel(credentials.model as AIModel);
+      }
+      setAiCredentialsState(credentials);
+    } else {
+      localStorage.removeItem(AI_PROVIDER_KEY);
+      localStorage.removeItem(AI_KEY_KEY);
+      localStorage.removeItem(AI_MODEL_KEY);
+      setAiCredentialsState(null);
+    }
+  }, []);
+
+
+  useEffect(() => {
+    setCredentialsProvider(() =>
+      aiCredentials?.apiKey ? { provider: aiCredentials.provider, apiKey: aiCredentials.apiKey } : null,
+    );
+  }, [aiCredentials]);
 
   // ------------------------------------------------------------ model preference
   useEffect(() => {
@@ -303,6 +363,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
     deleteProject,
     loadProject,
     createBlankProject,
+    aiCredentials,
+    setAiCredentials,
     selectedModel,
     setSelectedModel: handleSetModel,
     projectsLoading,
@@ -310,7 +372,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
     refreshProjects,
   }), [
     treatment, handleSetTreatment, projects, saveProject, deleteProject, loadProject,
-    createBlankProject, selectedModel, handleSetModel, projectsLoading, syncStatus, refreshProjects,
+    createBlankProject, aiCredentials, setAiCredentials, selectedModel, handleSetModel,
+    projectsLoading, syncStatus, refreshProjects,
   ]);
 
   return <AppContext.Provider value={value}>{children}</AppContext.Provider>;

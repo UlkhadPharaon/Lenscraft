@@ -44,6 +44,29 @@ models of the configured provider automatically (`GET /api/config`).
 Note: `qwen/qwen3.7-flash` is **not** a valid substitute — it accepts text/image/video
 but not audio, so the song-upload feature would break. Use `qwen/qwen3.8-omni-flash`.
 
+## Bring your own API key (BYOK)
+
+Users can plug **their own** key from the app header (bouton « Clé API ») and run
+LensCraft on their own quota. Providers supported and their **audio-capable** models:
+
+| Provider | Key format | Audio models | Live catalogue |
+|----------|-----------|--------------|----------------|
+| **OpenRouter** | `sk-or-v1-…` | 46 modèles (Qwen 3.8 Omni Flash, Nemotron Omni gratuit, gpt-audio, Gemini Flash, Voxtral, MiMo…) | ✅ public |
+| **NVIDIA NIM** | `nvapi-…` | `nvidia/nemotron-3-nano-omni-30b-a3b-reasoning` (gratuit) | ✅ public |
+| **OpenAI** | `sk-…` | `gpt-audio`, `gpt-audio-mini` | avec clé |
+| **Google Gemini** | `AIza…` | `gemini-3.5/3.7/3.8-flash`, `flash-lite` | avec clé |
+| **Anthropic** | `sk-ant-…` | ⚠️ aucun (texte seulement) | avec clé |
+| **Groq** | `gsk_…` | ⚠️ aucun | avec clé |
+
+`POST /api/models` returns the catalogue **filtered on audio input + tool calling**,
+so nobody can accidentally pick a text-only model for a song analysis.
+
+**Security model**
+- the key is stored in the user's browser (`localStorage`) and forwarded inside the
+  request body for that single call — never persisted server-side, never logged
+- `server/ai.ts` redacts key patterns from any upstream error before returning it
+- the `AI_PROVIDER` server-side default is still used when the user has no key
+
 ## Billing without Stripe
 
 While `STRIPE_SECRET_KEY` is unset, `POST /api/upgrade` activates a plan immediately

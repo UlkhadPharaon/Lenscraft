@@ -81,6 +81,7 @@ export default function Landing() {
             <a href="#fonctionnalites" className="hover:text-zinc-100 transition-colors">Fonctionnalités</a>
             <a href="#tarifs" className="hover:text-zinc-100 transition-colors">Tarifs</a>
             <a href="#faq" className="hover:text-zinc-100 transition-colors">FAQ</a>
+            <a href="/survey" className="text-indigo-400 hover:text-indigo-300 transition-colors">Donner mon avis (1 min)</a>
           </nav>
           <div className="flex items-center gap-3">
             {user ? (

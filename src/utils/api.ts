@@ -9,6 +9,8 @@ export interface RequestOptions {
   /** Attempts before giving up (default 3). */
   retries?: number;
   signal?: AbortSignal;
+  /** Overrides the BYOK credentials attached by default. */
+  ai?: { provider: string; apiKey: string } | null;
 }
 
 export class ApiError extends Error {
@@ -23,10 +25,17 @@ export class ApiError extends Error {
 const RETRYABLE_STATUSES = new Set([429, 502, 503, 504]);
 
 let fallbackTokenProvider: (() => Promise<string | null>) | null = null;
+/** Attached by AppProvider so every request can carry the caller's own AI key. */
+let fallbackCredentialsProvider: (() => { provider: string; apiKey: string } | null) | null = null;
 
 /** Registers the auth token provider (called once by AppProvider). */
 export function setTokenProvider(provider: () => Promise<string | null>) {
   fallbackTokenProvider = provider;
+}
+
+/** Registers the BYOK credentials provider (called once by AppProvider). */
+export function setCredentialsProvider(provider: () => { provider: string; apiKey: string } | null) {
+  fallbackCredentialsProvider = provider;
 }
 
 export async function resolveToken(): Promise<string | null> {
@@ -37,9 +46,15 @@ export async function resolveToken(): Promise<string | null> {
 const sleep = (ms: number) => new Promise<void>(resolve => setTimeout(resolve, ms));
 
 export async function postJson<T = any>(url: string, options: RequestOptions = {}): Promise<T> {
-  const { body, token, retries = 3, signal } = options;
+  const { body, token, retries = 3, signal, ai } = options;
 
   const authToken = token !== undefined ? token : await resolveToken();
+  const credentials = ai !== undefined ? ai : (fallbackCredentialsProvider ? fallbackCredentialsProvider() : null);
+
+  // A user-supplied key travels inside the request body — never in a header or a log.
+  const payload = credentials?.apiKey
+    ? { ...(body && typeof body === 'object' ? body : {}), ai: { provider: credentials.provider, apiKey: credentials.apiKey } }
+    : body;
 
   let lastError: Error = new Error('Requête échouée.');
 
@@ -51,7 +66,7 @@ export async function postJson<T = any>(url: string, options: RequestOptions = {
       const response = await fetch(url, {
         method: 'POST',
         headers,
-        body: JSON.stringify(body ?? {}),
+        body: JSON.stringify(payload ?? {}),
         signal,
       });
 

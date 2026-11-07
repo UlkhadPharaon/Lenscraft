@@ -15,6 +15,8 @@ import ToastContainer from './components/ToastContainer';
 // Route-level code splitting (P1): every page — and the app shell itself — is
 // its own lazy chunk, so the initial download stays minimal.
 const Layout = React.lazy(() => import('./components/Layout'));
+const Survey = React.lazy(() => import('./pages/Survey'));
+const SurveyResults = React.lazy(() => import('./pages/SurveyResults'));
 const Landing = React.lazy(() => import('./pages/Landing'));
 const Pricing = React.lazy(() => import('./pages/Pricing'));
 const Login = React.lazy(() => import('./pages/Login').then(m => ({ default: m.LoginPage })));
@@ -59,6 +61,8 @@ export default function App() {
             <Routes>
               {/* Public marketing surface */}
               <Route path="/" element={<Suspense fallback={<RouteFallback />}><Landing /></Suspense>} />
+              <Route path="/survey" element={<Suspense fallback={<RouteFallback />}><Survey /></Suspense>} />
+              <Route path="/survey/results" element={<Suspense fallback={<RouteFallback />}><SurveyResults /></Suspense>} />
               <Route path="/pricing" element={<Suspense fallback={<RouteFallback />}><Pricing /></Suspense>} />
               <Route path="/login" element={<Suspense fallback={<RouteFallback />}><Login /></Suspense>} />
               <Route path="/signup" element={<Suspense fallback={<RouteFallback />}><Signup /></Suspense>} />
