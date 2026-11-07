@@ -3,6 +3,8 @@ import { motion, AnimatePresence } from 'motion/react';
 import { MessageSquare, X, Send, Bot, Loader2, Sparkles, Check } from 'lucide-react';
 import { useAppContext } from '../context';
 import { VideoTreatment } from '../types';
+import toast from 'react-hot-toast';
+import { postJson, messageFor } from '../utils/api';
 
 export default function ChatAssistant() {
   const { treatment, setTreatment, selectedModel } = useAppContext();
@@ -10,7 +12,9 @@ export default function ChatAssistant() {
   const [message, setMessage] = useState('');
   const [loading, setLoading] = useState(false);
   const [chatHistory, setChatHistory] = useState<{role: 'user' | 'assistant', content: string}[]>([
-    { role: 'assistant', content: "Bonjour ! Je suis l'assistant IA de LensCraft. Dites-moi ce que vous souhaitez modifier dans ce dossier de production." }
+    { role: 'assistant', content: treatment
+      ? `Bonjour ! Je suis l'assistant IA de LensCraft. Dites-moi ce que vous souhaitez modifier dans le dossier « ${treatment.analysis?.title || 'votre projet'} ».`
+      : "Bonjour ! Je suis l'assistant IA de LensCraft. Dites-moi ce que vous souhaitez modifier dans ce dossier de production." }
   ]);
   const [error, setError] = useState<string | null>(null);
 
@@ -28,18 +32,13 @@ export default function ChatAssistant() {
     setError(null);
 
     try {
-      const res = await fetch("/api/assistant", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ treatment, message: userMessage, model: selectedModel }),
+      const data: { assistantMessage: string, treatment: VideoTreatment } = await postJson<{
+        assistantMessage: string;
+        treatment: VideoTreatment;
+      }>("/api/assistant", {
+        body: { treatment, message: userMessage, model: selectedModel },
+        retries: 3,
       });
-
-      if (!res.ok) {
-        const errData = await res.json().catch(() => ({}));
-        throw new Error(errData.error || `Échec de l'assistant (Erreur ${res.status}).`);
-      }
-
-      const data: { assistantMessage: string, treatment: VideoTreatment } = await res.json();
       
       // Update treatment globally while preserving its original ID and Creation Date
       setTreatment({
@@ -50,8 +49,11 @@ export default function ChatAssistant() {
       
       // Add assistant response to chat
       setChatHistory(prev => [...prev, { role: 'assistant', content: data.assistantMessage }]);
+      toast.success('Dossier mis à jour par l\'assistant.');
     } catch (err: any) {
-      setError(err.message);
+      const message = messageFor(err);
+      setError(message);
+      toast.error(message);
     } finally {
       setLoading(false);
     }

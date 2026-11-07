@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { motion } from 'motion/react';
 import { useAppContext } from '../context';
 import { Sparkles, Activity, MessageCircle, Music, Edit3, Save, Check } from 'lucide-react';
+import toast from 'react-hot-toast';
 
 export default function Analysis() {
   const { treatment, setTreatment } = useAppContext();
@@ -14,9 +15,9 @@ export default function Analysis() {
 
   useEffect(() => {
     if (!treatment) {
-      navigate('/');
+      navigate('/app');
     } else if (!isEditing) {
-      setEditedAnalysis(treatment.analysis);
+       setEditedAnalysis(treatment.analysis);
     }
   }, [treatment, navigate, isEditing]);
 
@@ -28,6 +29,7 @@ export default function Analysis() {
       });
       setIsEditing(false);
       setSaved(true);
+      toast.success('Analyse sauvegardée.');
       setTimeout(() => setSaved(false), 2000);
     }
   };

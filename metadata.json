@@ -1,6 +1,6 @@
 {
-  "name": "lescraft ai 2",
-  "description": "Generate music video treatments, scripts, and shot lists from music concepts and lyrics.",
+  "name": "lenscraft ai",
+  "description": "Générateur de dossiers de production de clips musicaux : scénarios, listes de plans, plannings de tournage et stratégies promo.",
   "requestFramePermissions": [],
   "majorCapabilities": [
     "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"

@@ -2,8 +2,9 @@ import React, { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { motion } from 'motion/react';
 import { useAppContext } from '../context';
-import { FileText, Save, Check, Download } from 'lucide-react';
-import { exportToDocx } from '../utils/export';
+import { FileText, Save, Check } from 'lucide-react';
+import toast from 'react-hot-toast';
+import ExportButtons from '../components/ExportButtons';
 
 export default function Script() {
   const { treatment, setTreatment } = useAppContext();
@@ -14,7 +15,7 @@ export default function Script() {
 
   useEffect(() => {
     if (!treatment) {
-      navigate('/');
+      navigate('/app');
     } else if (!scriptText) {
       setScriptText(treatment.script);
     }
@@ -27,13 +28,8 @@ export default function Script() {
         script: scriptText
       });
       setSaved(true);
+      toast.success('Script sauvegardé.');
       setTimeout(() => setSaved(false), 2000);
-    }
-  };
-
-  const handleExport = () => {
-    if (treatment) {
-      exportToDocx({ ...treatment, script: scriptText });
     }
   };
 
@@ -57,12 +53,7 @@ export default function Script() {
         </div>
         
         <div className="flex items-center gap-3">
-          <button
-            onClick={handleExport}
-            className="flex items-center gap-2 bg-zinc-900 hover:bg-zinc-800 text-blue-400 border border-zinc-700/50 hover:border-blue-500/50 font-medium py-2 px-5 rounded-xl transition-all"
-          >
-            <Download className="w-4 h-4" /> Exporter (.docx)
-          </button>
+          <ExportButtons treatment={treatment} override={{ ...treatment, script: scriptText }} label="Exporter" />
           
           <button
             onClick={handleSave}

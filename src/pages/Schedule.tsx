@@ -2,9 +2,10 @@ import React, { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { motion } from 'motion/react';
 import { useAppContext } from '../context';
-import { CalendarDays, MapPin, Users, Hammer, Edit3, Save, Check, Download, Video, Film, LayoutList, TextSelection, Trash2, Plus } from 'lucide-react';
-import { exportToDocx } from '../utils/export';
+import { CalendarDays, MapPin, Users, Hammer, Edit3, Save, Check, Video, Film, LayoutList, TextSelection, Trash2, Plus } from 'lucide-react';
 import { ProductionSchedule, ShootDay } from '../types';
+import toast from 'react-hot-toast';
+import ExportButtons from '../components/ExportButtons';
 
 export default function Schedule() {
   const { treatment, setTreatment } = useAppContext();
@@ -24,7 +25,7 @@ export default function Schedule() {
 
   useEffect(() => {
     if (!treatment) {
-      navigate('/');
+      navigate('/app');
     } else if (!isEditing) {
        if (treatment.schedule) setEditedSchedule(treatment.schedule);
        if (treatment.production) setEditedProduction(treatment.production);
@@ -40,13 +41,8 @@ export default function Schedule() {
       });
       setIsEditing(false);
       setSaved(true);
+      toast.success('Planning sauvegardé.');
       setTimeout(() => setSaved(false), 2000);
-    }
-  };
-
-  const handleExport = () => {
-    if (treatment) {
-      exportToDocx({ ...treatment, schedule: editedSchedule });
     }
   };
 
@@ -82,7 +78,8 @@ export default function Schedule() {
      setEditedProduction(prev => ({ ...prev, [field]: value }));
   };
 
-  if (!treatment || (!treatment.schedule && !treatment.production)) return null;
+  if (!treatment) return null;
+  const hasSchedule = Boolean(treatment.schedule?.length || treatment.production);
 
   return (
     <motion.div
@@ -99,12 +96,11 @@ export default function Schedule() {
         </div>
 
         <div className="flex items-center gap-3">
-          <button
-            onClick={handleExport}
-            className="flex items-center gap-2 bg-blue-600/20 hover:bg-blue-600/30 text-blue-400 border border-blue-500/30 font-medium py-2 px-4 rounded-lg transition-colors"
-          >
-            <Download className="w-4 h-4" /> Exporter (.docx)
-          </button>
+          <ExportButtons
+            treatment={treatment}
+            override={{ ...treatment, schedule: editedSchedule, production: editedProduction }}
+            label="Exporter"
+          />
           
           {isEditing ? (
              <button
@@ -125,6 +121,12 @@ export default function Schedule() {
       </div>
 
       <div className="space-y-8">
+        {!hasSchedule && (
+          <div className="text-center py-10 bg-zinc-900/30 border border-zinc-800/50 rounded-2xl text-zinc-500">
+            <p>Aucun planning défini.</p>
+            <p className="text-xs mt-1">Cliquez sur « Éditer » puis « Ajouter un Jour de Tournage » pour le construire à la main.</p>
+          </div>
+        )}
         {/* Production Overview */}
         <div className="bg-zinc-900/40 border border-zinc-800/50 rounded-2xl p-6 relative overflow-hidden">
           <div className="flex items-center gap-2 mb-6 border-b border-zinc-800/50 pb-4">

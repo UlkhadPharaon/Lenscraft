@@ -4,10 +4,13 @@ import { motion } from "motion/react";
 import { useAppContext } from "../context";
 import { VideoTreatment } from "../types";
 import { Music, Sparkles, Youtube, UploadCloud, FileAudio, Trash2, Loader2, Clapperboard, Globe } from "lucide-react";
+import toast from "react-hot-toast";
+import { postJson, messageFor } from "../utils/api";
+import LoadingOverlay from "../components/LoadingOverlay";
 
 export default function Home() {
   const navigate = useNavigate();
-  const { setTreatment, selectedModel } = useAppContext();
+  const { setTreatment, selectedModel, createBlankProject } = useAppContext();
   
   const [description, setDescription] = useState("");
   const [lyrics, setLyrics] = useState("");
@@ -71,6 +74,13 @@ export default function Home() {
     });
   };
 
+  /** Skip the AI: create an empty dossier and jump straight to editing. */
+  const handleBlankProject = () => {
+    createBlankProject();
+    toast.success('Dossier vierge créé — chaque section est modifiable.');
+    navigate('/app/analysis');
+  };
+
   const handleGenerate = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!description && !lyrics && !audioFile && !youtubeUrl) return;
@@ -87,18 +97,10 @@ export default function Home() {
         audioMimeType = audioFile.type;
       }
 
-      const res = await fetch("/api/generate", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ description, lyrics, audioBase64, audioMimeType, youtubeUrl, language, model: selectedModel }),
+      const data: VideoTreatment = await postJson<VideoTreatment>("/api/generate", {
+        body: { description, lyrics, audioBase64, audioMimeType, youtubeUrl, language, model: selectedModel },
+        retries: 3,
       });
-
-      if (!res.ok) {
-        const errData = await res.json().catch(() => ({}));
-        throw new Error(errData.error || `Échec de la génération (Erreur ${res.status}). Le modèle est peut-être surchargé, veuillez réessayer.`);
-      }
-
-      const data: VideoTreatment = await res.json();
       
       const newProject: VideoTreatment = {
         ...data,
@@ -107,16 +109,25 @@ export default function Home() {
       };
       
       setTreatment(newProject);
-      navigate("/analysis");
+      toast.success("Dossier de production généré !");
+      navigate("/app/analysis");
     } catch (err: any) {
-      setError(err.message);
+      const message = messageFor(err);
+      setError(message);
+      toast.error(message);
     } finally {
       setLoading(false);
     }
   };
 
   return (
-    <motion.div
+    <>
+      <LoadingOverlay
+        visible={loading}
+        title="Analyse en cours"
+        description="L'IA analyse votre morceau et rédige le dossier complet : script, scènes, découpage et planning."
+      />
+      <motion.div
       initial={{ opacity: 0, y: 20 }}
       animate={{ opacity: 1, y: 0 }}
       className="max-w-2xl mx-auto"
@@ -259,7 +270,19 @@ export default function Home() {
             </>
           )}
         </button>
+
+        <p className="text-center text-xs text-zinc-500">
+          Pas de clé API ou envie d'écrire vous-même ?{' '}
+          <button
+            type="button"
+            onClick={handleBlankProject}
+            className="text-indigo-400 hover:text-indigo-300 font-medium underline underline-offset-4"
+          >
+            Créer un dossier vierge
+          </button>
+        </p>
       </form>
     </motion.div>
+    </>
   );
 }

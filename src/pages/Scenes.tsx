@@ -2,8 +2,9 @@ import React, { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { motion } from 'motion/react';
 import { useAppContext } from '../context';
-import { ListVideo, Map, Users, Download, Edit3, Save, Check, Trash2, Plus } from 'lucide-react';
-import { exportToDocx } from '../utils/export';
+import { ListVideo, Map, Users, Edit3, Save, Check, Trash2, Plus } from 'lucide-react';
+import toast from 'react-hot-toast';
+import ExportButtons from '../components/ExportButtons';
 
 export default function Scenes() {
   const { treatment, setTreatment } = useAppContext();
@@ -15,7 +16,7 @@ export default function Scenes() {
 
   useEffect(() => {
     if (!treatment) {
-      navigate('/');
+      navigate('/app');
     } else if (!isEditing) {
        setEditedScenes(treatment.scenes);
     }
@@ -29,13 +30,8 @@ export default function Scenes() {
       });
       setIsEditing(false);
       setSaved(true);
+      toast.success('Scènes sauvegardées.');
       setTimeout(() => setSaved(false), 2000);
-    }
-  };
-
-  const handleExport = () => {
-    if (treatment) {
-      exportToDocx({ ...treatment, scenes: editedScenes });
     }
   };
 
@@ -77,12 +73,7 @@ export default function Scenes() {
         </div>
 
         <div className="flex items-center gap-3">
-          <button
-            onClick={handleExport}
-            className="flex items-center gap-2 bg-blue-600/20 hover:bg-blue-600/30 text-blue-400 border border-blue-500/30 font-medium py-2 px-4 rounded-lg transition-colors"
-          >
-            <Download className="w-4 h-4" /> Exporter (.docx)
-          </button>
+          <ExportButtons treatment={treatment} override={{ ...treatment, scenes: editedScenes }} label="Exporter" />
           
           {isEditing ? (
              <button

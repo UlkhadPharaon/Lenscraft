@@ -1,8 +1,23 @@
+# Dependencies & build output
 node_modules/
-build/
 dist/
+build/
 coverage/
+
+# Environment — NEVER commit real values (.env.example is tracked on purpose)
+.env
+.env.*
+!.env.example
+
+# OS / editor
 .DS_Store
 *.log
-.env*
-!.env.example
+
+# Local debug output
+*.out
+*.err
+srv.out
+srv.err
+
+# Vercel
+.vercel

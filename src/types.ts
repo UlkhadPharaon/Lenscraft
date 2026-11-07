@@ -50,6 +50,8 @@ export interface PromoIdea {
   viralScore: number;
   efficiencyScore: number;
   explanation: string;
+  /** Set by the user to keep a concept in their favourites. */
+  favorite?: boolean;
 }
 
 export interface PromoStrategy {

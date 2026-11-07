@@ -2,8 +2,9 @@ import React, { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { motion } from 'motion/react';
 import { useAppContext } from '../context';
-import { Camera, Edit3, Save, Check, Download, Trash2, Plus } from 'lucide-react';
-import { exportToDocx } from '../utils/export';
+import { Camera, Edit3, Save, Check, Trash2, Plus } from 'lucide-react';
+import toast from 'react-hot-toast';
+import ExportButtons from '../components/ExportButtons';
 
 export default function ShotList() {
   const { treatment, setTreatment } = useAppContext();
@@ -15,12 +16,11 @@ export default function ShotList() {
 
   useEffect(() => {
     if (!treatment) {
-      navigate('/');
+      navigate('/app');
     } else if (!isEditing && treatment.shotList) {
        setEditedShots(treatment.shotList);
     }
   }, [treatment, navigate, isEditing]);
-
   const handleSave = () => {
     if (treatment) {
       setTreatment({
@@ -29,13 +29,8 @@ export default function ShotList() {
       });
       setIsEditing(false);
       setSaved(true);
+      toast.success('Découpage technique sauvegardé.');
       setTimeout(() => setSaved(false), 2000);
-    }
-  };
-
-  const handleExport = () => {
-    if (treatment) {
-      exportToDocx({ ...treatment, shotList: editedShots });
     }
   };
 
@@ -45,16 +40,21 @@ export default function ShotList() {
      setEditedShots(newShots);
   };
 
+  // C2 fix: builds a shot matching the `Shot` interface exactly
+  // (sceneNumber/shotNumber as NUMBERS, type/cameraMovement/lens/duration/description).
   const addShot = () => {
-    const newShotNumber = editedShots.length > 0 ? Math.max(...editedShots.map(s => parseInt(s.shotNumber) || 0)) + 1 : 1;
+    const numbers = editedShots.map(s => Number(s.shotNumber) || 0);
+    const newShotNumber = (numbers.length > 0 ? Math.max(...numbers) : 0) + 1;
+    const sceneNumbers = editedShots.map(s => Number(s.sceneNumber) || 0);
+    const fallbackScene = sceneNumbers.length > 0 ? sceneNumbers[sceneNumbers.length - 1] : 1;
     setEditedShots([...editedShots, {
-       shotNumber: newShotNumber.toString(),
-       sceneNumber: '',
-       shotType: '',
-       angle: '',
-       movement: '',
-       action: '',
-       equipment: ''
+       sceneNumber: fallbackScene,
+       shotNumber: newShotNumber,
+       type: '',
+       cameraMovement: '',
+       lens: '',
+       duration: '',
+       description: ''
     }]);
   };
 
@@ -62,7 +62,9 @@ export default function ShotList() {
     setEditedShots(editedShots.filter((_, i) => i !== index));
   };
 
-  if (!treatment || !treatment.shotList) return null;
+  // A blank (manually created) dossier has no shotList yet — render it as an
+  // empty editable table instead of returning null.
+  if (!treatment) return null;
 
   return (
     <motion.div
@@ -79,12 +81,7 @@ export default function ShotList() {
         </div>
 
         <div className="flex items-center gap-3">
-          <button
-            onClick={handleExport}
-            className="flex items-center gap-2 bg-blue-600/20 hover:bg-blue-600/30 text-blue-400 border border-blue-500/30 font-medium py-2 px-4 rounded-lg transition-colors"
-          >
-            <Download className="w-4 h-4" /> Exporter (.docx)
-          </button>
+          <ExportButtons treatment={treatment} override={{ ...treatment, shotList: editedShots }} label="Exporter" />
           
           {isEditing ? (
              <button
