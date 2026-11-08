@@ -1,0 +1,36 @@
+# ============================================================================
+# LensCraft AI — Cloudflare Workers + Static Assets
+#
+# The React/Vite SPA is built to ./dist and served as Workers Static Assets.
+# The Express API (server/app.ts) runs inside the worker for /api/* and /health.
+#
+# Commands:
+#   npm run build            # vite build  -> ./dist
+#   npm run preview:workers  # local test: http://localhost:8788
+#   npm run deploy:workers   # production deploy
+#
+# Secrets (never commit) are set with:
+#   npx wrangler secret put GEMINI_API_KEY
+# See DEPLOYMENT.md for the full list.
+# ============================================================================
+
+name = "lenscraft-ai"
+main = "functions/index.ts"
+compatibility_date = "2026-11-01"
+# Node.js compatibility: Express, body-parser and dotenv rely on Node built-ins.
+compatibility_flags = ["nodejs_compat"]
+
+[assets]
+directory = "./dist"
+binding = "ASSETS"
+# SPA deep links (/pricing, /app/analysis, ...) must return index.html so
+# react-router's BrowserRouter can take over.
+not_found_handling = "single-page-application"
+
+# ---------------------------------------------------------------------------
+# Plain (non-secret) variables. Override APP_URL after the first deploy with the
+# real *.workers.dev URL (used for Stripe redirects and the CORS allow-list).
+# ---------------------------------------------------------------------------
+[vars]
+NODE_ENV = "production"
+APP_URL = "https://lenscraft-ai.<account>.workers.dev"

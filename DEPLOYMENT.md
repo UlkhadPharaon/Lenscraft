@@ -74,7 +74,45 @@ While `STRIPE_SECRET_KEY` is unset, `POST /api/upgrade` activates a plan immedia
 configured that endpoint returns `409` and plans can only change through a real Stripe
 checkout — payments cannot be bypassed.
 
-## Deploy steps
+## Deploy steps — Cloudflare Pages (primary)
+
+1. Push the repository to GitHub (`UlkhadPharaon/Lenscraft`).
+
+2. Configure environment variables in **Cloudflare Dashboard → Workers & Pages → lenscraft-ai → Environment Variables** (or via `wrangler secret put`):
+
+   | Variable | Type | Required | Purpose |
+   |----------|------|----------|---------|
+   | `AI_PROVIDER` | env var | Yes | `gemini` (default) or `openrouter` |
+   | `GEMINI_API_KEY` | secret | If gemini | Google Gemini API key |
+   | `GEMINI_MODEL` | env var | Optional | Model override (`gemini-3.5-flash`) |
+   | `OPENROUTER_API_KEY` | secret | If openrouter | OpenRouter API key |
+   | `OPENROUTER_MODEL` | env var | Optional | Override (`qwen/qwen3.8-omni-flash`) |
+   | `VITE_SUPABASE_URL` | secret | Yes | Supabase project URL |
+   | `VITE_SUPABASE_ANON_KEY` | secret | Yes | Supabase anon key |
+   | `SUPABASE_SERVICE_ROLE_KEY` | secret | Yes | Bypasses RLS |
+   | `STRIPE_SECRET_KEY` | secret | Billing | Stripe checkout sessions |
+   | `STRIPE_WEBHOOK_SECRET` | secret | Billing | Verifies webhook signatures |
+   | `APP_URL` | env var | Recommended | CF Pages URL (e.g. `https://lenscraft-ai.pages.dev`) |
+   | `STRIPE_CURRENCY` | env var | Optional | Default `xof` (Franc CFA) |
+
+3. Run `supabase/migrations/001_init.sql` in the Supabase SQL Editor
+   (creates `profiles`, `treatments`, RLS policies and the signup trigger).
+
+4. Enable Google + GitHub providers in Supabase → Authentication → Providers,
+   and add your CF Pages URL as a redirect URL.
+
+5. Create Stripe products priced in **XOF** ("Pro" 5 000 FCFA, "Studio" 15 000 FCFA),
+   then point the webhook at `https://<your-domain>/api/webhook/stripe`.
+
+6. Deploy: `npx wrangler pages deploy dist --branch main`
+   Then open `/health` — it must return JSON with `"status": "ok"`.
+
+   > ⚠️ **Timeout note:** Cloudflare Pages Functions on the Free plan have a 15-second
+   > execution limit. AI generation calls may exceed this timeout. On the Pro plan
+   (> $5/mo), the limit is 30 minutes. Consider using server-sent events or polling
+   if you need long-running generations on the Free tier.
+
+## Deploy steps — Vercel (legacy / fallback)
 
 1. Push the repository to GitHub (`UlkhadPharaon/LensCraft`).
 2. Import it in Vercel → Framework preset **Vite**.
@@ -82,14 +120,8 @@ checkout — payments cannot be bypassed.
    - Output directory: `dist`
    - Install command: `npm install`
 3. Add every environment variable from the table above.
-4. Run `supabase/migrations/001_init.sql` in the Supabase SQL Editor
-   (creates `profiles`, `treatments`, RLS policies and the signup trigger).
-5. Enable Google + GitHub providers in Supabase → Authentication → Providers,
-   and add `https://<your-domain>/app` as a redirect URL.
-6. Create Stripe products priced in **XOF** ("Pro" 5 000 FCFA, "Studio" 15 000 FCFA),
-   then point the webhook at `https://<your-domain>/api/webhook/stripe`
-   (`checkout.session.completed`, `customer.subscription.*`).
-7. Deploy, then open `/health` — it must return JSON with `"status": "ok"`.
+4. Deploy, then open `/health` — it must return JSON with `"status": "ok"`.
+
 
 ## Local run
 

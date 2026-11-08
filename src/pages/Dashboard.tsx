@@ -111,7 +111,7 @@ export default function Dashboard() {
 
       {mode === 'local' && (
         <div className="text-xs text-zinc-500 bg-zinc-900/50 border border-zinc-800 rounded-xl px-4 py-3">
-          Mode local : Supabase n'est pas configuré, vos projets sont conservés dans ce navigateur uniquement.
+          Mode local : PocketBase n'est pas configuré, vos projets sont conservés dans ce navigateur uniquement.
           {user ? ` Session : ${user.email}` : ''}
         </div>
       )}

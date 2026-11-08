@@ -8,7 +8,7 @@
  */
 import dotenv from 'dotenv';
 import { createServer as createViteServer } from 'vite';
-import { validateEnvironment, env, isProduction, isSupabaseConfigured } from './server/env';
+import { validateEnvironment, env, isProduction, isPocketBaseConfigured } from './server/env';
 import { createApp } from './server/app';
 import { getStripe } from './server/stripe';
 
@@ -45,7 +45,7 @@ async function startServer() {
 
   const server = app.listen(env.port, '0.0.0.0', () => {
     console.log(`\n🎬 LensCraft AI running on http://localhost:${env.port}`);
-    console.log(`   Mode: ${isProduction ? 'production' : 'development'} | Data: ${isSupabaseConfigured ? 'supabase' : 'local'} | Billing: ${getStripe() ? 'stripe' : 'disabled'}\n`);
+    console.log(`   Mode: ${isProduction ? 'production' : 'development'} | Data: ${isPocketBaseConfigured ? 'pocketbase' : 'local'} | Billing: ${getStripe() ? 'stripe' : 'disabled'}\n`);
   });
 
   // Graceful shutdown.

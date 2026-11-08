@@ -1,6 +1,7 @@
 import React, { createContext, useContext, useState, useEffect, useCallback, useMemo, ReactNode } from 'react';
+import type PocketBase from 'pocketbase';
 import { VideoTreatment } from './types';
-import { getSupabaseClient } from './lib/supabase';
+import { getPocketBaseClient } from './lib/pocketbase';
 import { useAuth } from './components/auth/AuthProvider';
 import { setTokenProvider, setCredentialsProvider } from './utils/api';
 
@@ -192,25 +193,25 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
   // -------------------------------------------------------------- project loading
   const fetchRemoteProjects = useCallback(async (
-    sb: NonNullable<Awaited<ReturnType<typeof getSupabaseClient>>>,
+    pb: PocketBase,
     userId: string,
   ): Promise<VideoTreatment[]> => {
-    const { data, error } = await sb
-      .from('treatments')
-      .select('id, data, created_at')
-      .eq('user_id', userId)
-      .order('created_at', { ascending: false })
-      .limit(100);
-
-    if (error) {
-      console.error('Supabase fetch failed', error);
-      throw new Error(error.message);
+    let records: any[] = [];
+    try {
+      const page = await pb.collection('treatments').getList(1, 100, {
+        filter: `user_id = "${userId}"`,
+        sort: '-created',
+      });
+      records = page.items;
+    } catch (error: any) {
+      console.error('PocketBase fetch failed', error);
+      throw new Error(error?.message ?? String(error));
     }
 
-    return (data || []).map((row: any) => ({
+    return records.map((row: any) => ({
       ...(row.data as VideoTreatment),
       id: row.id,
-      createdAt: row.data?.createdAt ?? new Date(row.created_at).getTime(),
+      createdAt: row.data?.createdAt ?? new Date(row.created).getTime(),
     }));
   }, []);
 
@@ -233,9 +234,9 @@ export function AppProvider({ children }: { children: ReactNode }) {
     // 2. Cloud refresh (merge: cloud wins for rows that also exist locally).
     setSyncStatus('syncing');
     try {
-      const sb = await getSupabaseClient();
-      if (sb) {
-        const remote = await fetchRemoteProjects(sb, user.id);
+      const pb = await getPocketBaseClient();
+      if (pb) {
+        const remote = await fetchRemoteProjects(pb, user.id);
         setProjects(remote);
         writeCache(remote);
       }
@@ -279,25 +280,34 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
     // Optimistic cloud sync (fire and forget; failures keep the offline cache).
     void (async () => {
-      const sb = await getSupabaseClient();
-      if (!sb || !user || !project.id) return;
+      const pb = await getPocketBaseClient();
+      if (!pb || !user || !project.id) return;
       setSyncStatus('syncing');
-      const { error } = await sb.from('treatments').upsert(
-        {
-          id: project.id,
+      try {
+        // PocketBase has no native upsert: update, then create on 404.
+        await pb.collection('treatments').update(project.id, {
           user_id: user.id,
           data: project,
-          version: 1,
-          updated_at: new Date().toISOString(),
-        },
-        { onConflict: 'id' },
-      );
-      if (error) {
-        console.error('Supabase upsert failed', error);
-        setSyncStatus('error');
-      } else {
-        setSyncStatus('synced');
+        });
+      } catch (error) {
+        if ((error as { status?: number })?.status !== 404) {
+          console.error('PocketBase upsert failed', error);
+          setSyncStatus('error');
+          return;
+        }
+        try {
+          await pb.collection('treatments').create({
+            id: project.id,
+            user_id: user.id,
+            data: project,
+          });
+        } catch (createError) {
+          console.error('PocketBase upsert failed', createError);
+          setSyncStatus('error');
+          return;
+        }
       }
+      setSyncStatus('synced');
     })();
   }, [user]);
 
@@ -316,11 +326,12 @@ export function AppProvider({ children }: { children: ReactNode }) {
     });
 
     void (async () => {
-      const sb = await getSupabaseClient();
-      if (!sb || !user) return;
-      const { error } = await sb.from('treatments').delete().eq('id', id).eq('user_id', user.id);
-      if (error) {
-        console.error('Supabase delete failed', error);
+      const pb = await getPocketBaseClient();
+      if (!pb || !user) return;
+      try {
+        await pb.collection('treatments').delete(id);
+      } catch (error) {
+        console.error('PocketBase delete failed', error);
         setSyncStatus('error');
       }
     })();

@@ -95,11 +95,11 @@ export function LoginPage() {
     >
       {mode === 'local' && (
         <div className="text-xs text-amber-300/90 bg-amber-500/10 border border-amber-500/20 rounded-xl px-3 py-2">
-          Supabase n'est pas configuré : la connexion par email/OAuth est désactivée. Utilisez la session démo locale pour explorer l'application.
+          PocketBase n'est pas configuré : la connexion par email/OAuth est désactivée. Utilisez la session démo locale pour explorer l'application.
         </div>
       )}
 
-      {mode === 'supabase' && (
+      {mode === 'pocketbase' && (
         <>
           <button
             type="button"
@@ -228,11 +228,11 @@ export function SignupPage() {
     >
       {mode === 'local' && (
         <div className="text-xs text-amber-300/90 bg-amber-500/10 border border-amber-500/20 rounded-xl px-3 py-2">
-          Supabase n'est pas configuré : l'inscription par email/OAuth est désactivée. Utilisez la session démo locale pour explorer l'application.
+          PocketBase n'est pas configuré : l'inscription par email/OAuth est désactivée. Utilisez la session démo locale pour explorer l'application.
         </div>
       )}
 
-      {mode === 'supabase' && (
+      {mode === 'pocketbase' && (
         <>
           <button
             type="button"

@@ -1,6 +1,6 @@
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useState, ReactNode } from 'react';
-import type { Session, SupabaseClient, User as SupabaseUser } from '@supabase/supabase-js';
-import { getSupabaseClient, isSupabaseConfigured, supabaseConfigError } from '../../lib/supabase';
+import type PocketBase from 'pocketbase';
+import { getPocketBaseClient, isPocketBaseConfigured, pocketbaseConfigError } from '../../lib/pocketbase';
 export type SubscriptionTier = 'free' | 'pro' | 'studio';
 
 export interface AuthUser {
@@ -20,20 +20,25 @@ export interface AuthProfile {
   lastGenerationDate: string | null;
 }
 
+interface AuthSession {
+  user: AuthUser;
+  accessToken: string;
+}
+
 interface AuthContextValue {
   user: AuthUser | null;
   profile: AuthProfile | null;
-  session: Session | null;
+  session: AuthSession | null;
   /** True until the initial session has been resolved. */
   initializing: boolean;
-  /** 'supabase' when real auth is configured, 'local' for the offline demo account. */
-  mode: 'supabase' | 'local';
+  /** 'pocketbase' when real auth is configured, 'local' for the offline demo account. */
+  mode: 'pocketbase' | 'local';
   configError: string | null;
   signInWithGoogle: () => Promise<void>;
   signInWithGithub: () => Promise<void>;
   signInWithEmail: (email: string, password: string) => Promise<void>;
   signUpWithEmail: (email: string, password: string, fullName?: string) => Promise<void>;
-  /** Only meaningful in local mode: creates a device-local account without Supabase. */
+  /** Only meaningful in local mode: creates a device-local account without PocketBase. */
   signInAsLocalGuest: () => Promise<void>;
   /** Changes the plan (Stripe checkout when billing is live, else local demo). */
   setSubscriptionTier: (tier: SubscriptionTier) => Promise<{ checkout: boolean }>;
@@ -77,12 +82,13 @@ function createLocalUser(): AuthUser {
   return user;
 }
 
-function toAuthUser(supabaseUser: SupabaseUser): AuthUser {
+/** Normalises a PocketBase auth record into the app's AuthUser shape. */
+function toAuthUser(record: { id: string; email?: string | null; name?: string | null; avatar?: string | null }): AuthUser {
   return {
-    id: supabaseUser.id,
-    email: supabaseUser.email || 'utilisateur@lenscraft.app',
-    fullName: (supabaseUser.user_metadata?.full_name as string) || (supabaseUser.user_metadata?.name as string) || null,
-    avatarUrl: (supabaseUser.user_metadata?.avatar_url as string) || (supabaseUser.user_metadata?.picture as string) || null,
+    id: record.id,
+    email: record.email || 'utilisateur@lenscraft.app',
+    fullName: typeof record.name === 'string' && record.name ? record.name : null,
+    avatarUrl: typeof record.avatar === 'string' && record.avatar ? record.avatar : null,
   };
 }
 
@@ -99,11 +105,10 @@ function localProfile(local: AuthUser): AuthProfile {
   };
 }
 
-function toProfile(supabaseUser: SupabaseUser, row: any): AuthProfile {
-  const authUser = toAuthUser(supabaseUser);
+function toProfile(authUser: AuthUser, row: any): AuthProfile {
   return {
-    id: supabaseUser.id,
-    email: supabaseUser.email || row?.email || 'utilisateur@lenscraft.app',
+    id: authUser.id,
+    email: authUser.email || (typeof row?.email === 'string' ? row.email : 'utilisateur@lenscraft.app'),
     fullName: row?.full_name ?? authUser.fullName,
     avatarUrl: row?.avatar_url ?? authUser.avatarUrl,
     subscriptionTier: (row?.subscription_tier as SubscriptionTier) || 'free',
@@ -113,21 +118,26 @@ function toProfile(supabaseUser: SupabaseUser, row: any): AuthProfile {
 }
 
 export function AuthProvider({ children }: { children: ReactNode }) {
-  const [client, setClient] = useState<SupabaseClient | null>(null);
-  const [session, setSession] = useState<Session | null>(null);
+  const [client, setClient] = useState<PocketBase | null>(null);
+  const [session, setSession] = useState<AuthSession | null>(null);
   const [user, setUser] = useState<AuthUser | null>(null);
   const [profile, setProfile] = useState<AuthProfile | null>(null);
   const [initializing, setInitializing] = useState(true);
 
-  const mode: 'supabase' | 'local' = isSupabaseConfigured ? 'supabase' : 'local';
+  const mode: 'pocketbase' | 'local' = isPocketBaseConfigured ? 'pocketbase' : 'local';
 
-  const loadProfile = useCallback(async (sb: SupabaseClient, supabaseUser: SupabaseUser) => {
-    const { data } = await sb
-      .from('profiles')
-      .select('email, full_name, avatar_url, subscription_tier, generations_count, last_generation_date')
-      .eq('id', supabaseUser.id)
-      .maybeSingle();
-    setProfile(toProfile(supabaseUser, data));
+  const loadProfile = useCallback(async (pb: PocketBase, authUser: AuthUser) => {
+    let row: Record<string, unknown> | null = null;
+    try {
+      row = (await pb.collection('profiles').getOne(authUser.id)) as unknown as Record<string, unknown>;
+    } catch (error) {
+      // 404 = no profile row yet. PocketBase has no auth trigger: the server
+      // provisions the profile on the first generation; until then the UI
+      // falls back to the free tier.
+      const status = (error as { status?: number })?.status;
+      if (status !== 404) console.error('Chargement du profil impossible :', error);
+    }
+    setProfile(toProfile(authUser, row));
   }, []);
 
   // Initial session resolution.
@@ -136,10 +146,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     let subscription: { unsubscribe: () => void } | null = null;
 
     void (async () => {
-      const sb = await getSupabaseClient();
+      const pb = await getPocketBaseClient();
       if (!active) return;
 
-      if (!sb) {
+      if (!pb) {
         const local = readLocalUser();
         if (local) {
           setUser(local);
@@ -149,27 +159,41 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         return;
       }
 
-      setClient(sb);
+      setClient(pb);
 
-      const { data } = await sb.auth.getSession();
-      if (!active) return;
-      setSession(data.session);
-      setUser(data.session?.user ? toAuthUser(data.session.user) : null);
-      if (data.session?.user) void loadProfile(sb, data.session.user);
+      // PocketBase persists the session in localStorage: a valid stored token
+      // restores the session without a round-trip, and is rotated once
+      // (equivalent of PocketBase's autoRefreshToken).
+      const stored = pb.authStore.record;
+      if (pb.authStore.isValid && stored) {
+        const authUser = toAuthUser(stored);
+        setUser(authUser);
+        setSession({ user: authUser, accessToken: pb.authStore.token });
+        void loadProfile(pb, authUser);
+        pb.collection('users')
+          .authRefresh()
+          .catch(error => {
+            console.error('Rafraîchissement de la session impossible :', error);
+            pb.authStore.clear();
+          });
+      } else {
+        pb.authStore.clear();
+      }
       setInitializing(false);
 
-      const listener = sb.auth.onAuthStateChange((_event, nextSession) => {
+      const unsubscribe = pb.authStore.onChange((token, record) => {
         if (!active) return;
-        setSession(nextSession);
-        setUser(nextSession?.user ? toAuthUser(nextSession.user) : null);
-        if (nextSession?.user) {
-          void loadProfile(sb, nextSession.user);
+        const nextUser = record ? toAuthUser(record) : null;
+        setUser(nextUser);
+        setSession(nextUser ? { user: nextUser, accessToken: token } : null);
+        if (nextUser) {
+          void loadProfile(pb, nextUser);
         } else {
           setProfile(null);
         }
         setInitializing(false);
       });
-      subscription = listener.data.subscription;
+      subscription = { unsubscribe };
     })();
 
     return () => {
@@ -178,42 +202,47 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     };
   }, [loadProfile]);
 
-  const requireSupabase = useCallback((): SupabaseClient => {
+  const requirePocketBase = useCallback((): PocketBase => {
     if (!client) {
-      throw new Error('Supabase n\'est pas configuré. Ajoutez VITE_SUPABASE_URL et VITE_SUPABASE_ANON_KEY pour activer les comptes.');
+      throw new Error('PocketBase n\'est pas configuré. Ajoutez VITE_POCKETBASE_URL pour activer les comptes.');
     }
     return client;
   }, [client]);
 
   const signInWithGoogle = useCallback(async () => {
-    const { error } = await requireSupabase().auth.signInWithOAuth({
-      provider: 'google',
-      options: { redirectTo: `${window.location.origin}/app` },
-    });
-    if (error) throw new Error(error.message);
-  }, [requireSupabase]);
+    // Requires an OAuth provider configured in the PocketBase dashboard
+    // (Auth providers). Without it the server answers with an error page.
+    try {
+      await requirePocketBase().collection('users').authWithOAuth2({ provider: 'google' });
+    } catch {
+      throw new Error('Connexion Google indisponible sur ce serveur (OAuth non configuré dans PocketBase). Utilisez un email.');
+    }
+  }, [requirePocketBase]);
 
   const signInWithGithub = useCallback(async () => {
-    const { error } = await requireSupabase().auth.signInWithOAuth({
-      provider: 'github',
-      options: { redirectTo: `${window.location.origin}/app` },
-    });
-    if (error) throw new Error(error.message);
-  }, [requireSupabase]);
+    try {
+      await requirePocketBase().collection('users').authWithOAuth2({ provider: 'github' });
+    } catch {
+      throw new Error('Connexion GitHub indisponible sur ce serveur (OAuth non configuré dans PocketBase). Utilisez un email.');
+    }
+  }, [requirePocketBase]);
 
   const signInWithEmail = useCallback(async (email: string, password: string) => {
-    const { error } = await requireSupabase().auth.signInWithPassword({ email, password });
-    if (error) throw new Error(error.message);
-  }, [requireSupabase]);
+    await requirePocketBase().collection('users').authWithPassword(email, password);
+  }, [requirePocketBase]);
 
   const signUpWithEmail = useCallback(async (email: string, password: string, fullName?: string) => {
-    const { error } = await requireSupabase().auth.signUp({
+    const pb = requirePocketBase();
+    await pb.collection('users').create({
       email,
       password,
-      options: { data: { full_name: fullName }, emailRedirectTo: `${window.location.origin}/app` },
+      passwordConfirm: password,
+      name: fullName ?? '',
+      emailVisibility: true,
     });
-    if (error) throw new Error(error.message);
-  }, [requireSupabase]);
+    // PocketBase does not sign the user in on create — authenticate right away.
+    await pb.collection('users').authWithPassword(email, password);
+  }, [requirePocketBase]);
 
   /** Local mode: creates/restores a device-local account so the app stays usable. */
   const signInAsLocalGuest = useCallback(async () => {
@@ -223,7 +252,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const signOut = useCallback(async () => {
-    if (client) await client.auth.signOut();
+    client?.authStore.clear();
     localStorage.removeItem(LOCAL_USER_KEY);
     localStorage.removeItem(LOCAL_PLAN_KEY);
     setUser(null);
@@ -239,11 +268,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
    *   without any credentials.
    */
   const setSubscriptionTier = useCallback(async (tier: SubscriptionTier): Promise<{ checkout: boolean }> => {
-    const supabase = await getSupabaseClient();
+    const pb = await getPocketBaseClient();
 
-    if (supabase) {
-      const { data } = await supabase.auth.getSession();
-      const token = data.session?.access_token;
+    if (pb) {
+      const token = pb.authStore.token;
       const response = await fetch('/api/upgrade', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) },
@@ -256,7 +284,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       }
       if (!response.ok) throw new Error(payload?.error || 'Changement de plan refusé.');
 
-      if (session?.user) await loadProfile(supabase, session.user);
+      if (session?.user) await loadProfile(pb, session.user);
       return { checkout: false };
     }
 
@@ -274,10 +302,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, [client, session, loadProfile]);
 
   const getAccessToken = useCallback(async () => {
-    const sb = await getSupabaseClient();
-    if (!sb) return 'local-mode';
-    const { data } = await sb.auth.getSession();
-    return data.session?.access_token ?? null;
+    const pb = await getPocketBaseClient();
+    if (!pb) return 'local-mode';
+    return pb.authStore.token;
   }, []);
 
   const value = useMemo<AuthContextValue>(() => ({
@@ -286,7 +313,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     session,
     initializing,
     mode,
-    configError: supabaseConfigError,
+    configError: pocketbaseConfigError,
     signInWithGoogle,
     signInWithGithub,
     signInWithEmail,

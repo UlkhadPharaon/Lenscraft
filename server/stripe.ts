@@ -1,6 +1,6 @@
 import Stripe from 'stripe';
 import { env } from './env';
-import type { SubscriptionTier } from './supabase-admin';
+import type { SubscriptionTier } from './pocketbase-admin';
 
 let stripeClient: Stripe | null | undefined;
 

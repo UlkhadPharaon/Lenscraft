@@ -14,9 +14,9 @@ export interface AppEnv {
   geminiModel: string;
   openRouterApiKey: string;
   openRouterModel: string;
-  supabaseUrl: string;
-  supabaseAnonKey: string;
-  supabaseServiceRoleKey: string;
+  pocketbaseUrl: string;
+  pocketbaseAdminEmail: string;
+  pocketbaseAdminPassword: string;
   stripeSecretKey: string;
   stripeWebhookSecret: string;
   /** Currency used for plans (XOF = Franc CFA, a zero-decimal currency). */
@@ -39,7 +39,7 @@ function isPlaceholder(value: string | undefined): boolean {
 
 /**
  * Validates the runtime environment. GEMINI_API_KEY is fatal (the AI features
- * cannot work at all without it); Supabase / Stripe keys only produce warnings
+ * cannot work at all without it); PocketBase / Stripe keys only produce warnings
  * because the app degrades gracefully to local mode / disabled billing.
  */
 export function validateEnvironment(): EnvValidation {
@@ -60,13 +60,13 @@ export function validateEnvironment(): EnvValidation {
     fatal.push('OPENROUTER_API_KEY is required when AI_PROVIDER=openrouter.');
   }
 
-  const supabaseUrl = (process.env.VITE_SUPABASE_URL || process.env.SUPABASE_URL || '').trim();
-  const supabaseAnonKey = (process.env.VITE_SUPABASE_ANON_KEY || process.env.SUPABASE_ANON_KEY || '').trim();
-  const supabaseServiceRoleKey = (process.env.SUPABASE_SERVICE_ROLE_KEY || '').trim();
-  if (!supabaseUrl || !supabaseAnonKey) {
-    warnings.push('VITE_SUPABASE_URL / VITE_SUPABASE_ANON_KEY missing -> authentication & cloud storage run in LOCAL mode (data stays in the browser).');
-  } else if (!supabaseServiceRoleKey) {
-    warnings.push('SUPABASE_SERVICE_ROLE_KEY missing -> server-side quota enforcement and Stripe webhooks are disabled.');
+  const pocketbaseUrl = (process.env.VITE_POCKETBASE_URL || process.env.POCKETBASE_URL || '').trim();
+  const pocketbaseAdminEmail = (process.env.POCKETBASE_ADMIN_EMAIL || '').trim();
+  const pocketbaseAdminPassword = process.env.POCKETBASE_ADMIN_PASSWORD || '';
+  if (!pocketbaseUrl) {
+    warnings.push('VITE_POCKETBASE_URL missing -> authentication & cloud storage run in LOCAL mode (data stays in the browser).');
+  } else if (!pocketbaseAdminEmail || !pocketbaseAdminPassword) {
+    warnings.push('POCKETBASE_ADMIN_EMAIL / POCKETBASE_ADMIN_PASSWORD missing -> server-side quota enforcement and Stripe webhooks are disabled.');
   }
 
   const stripeSecretKey = (process.env.STRIPE_SECRET_KEY || '').trim();
@@ -86,9 +86,9 @@ export function validateEnvironment(): EnvValidation {
     geminiModel: (process.env.GEMINI_MODEL || 'gemini-3.5-flash').trim(),
     openRouterApiKey: (process.env.OPENROUTER_API_KEY || '').trim(),
     openRouterModel: (process.env.OPENROUTER_MODEL || 'qwen/qwen3.8-omni-flash').trim(),
-    supabaseUrl,
-    supabaseAnonKey,
-    supabaseServiceRoleKey,
+    pocketbaseUrl,
+    pocketbaseAdminEmail,
+    pocketbaseAdminPassword,
     stripeSecretKey,
     stripeWebhookSecret,
     currency: (process.env.STRIPE_CURRENCY || 'xof').trim().toLowerCase(),
@@ -99,4 +99,4 @@ export function validateEnvironment(): EnvValidation {
 
 export const { env } = validateEnvironment();
 export const isProduction = env.nodeEnv === 'production';
-export const isSupabaseConfigured = Boolean(env.supabaseUrl && env.supabaseAnonKey && env.supabaseServiceRoleKey);
+export const isPocketBaseConfigured = Boolean(env.pocketbaseUrl && env.pocketbaseAdminEmail && env.pocketbaseAdminPassword);

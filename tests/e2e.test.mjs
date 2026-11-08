@@ -89,7 +89,7 @@ async function main() {
 
     await page.goto(`${BASE}/login`, { waitUntil: 'networkidle' });
     const loginBody = await page.textContent('body');
-    check('login page renders the local-mode notice', /Supabase n'est pas configur/i.test(loginBody));
+    check('login page renders the local-mode notice', /PocketBase n'est pas configur/i.test(loginBody));
 
     // ---- 3. auth guard ---------------------------------------------------
     await page.goto(`${BASE}/app`, { waitUntil: 'networkidle' });

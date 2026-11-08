@@ -4,7 +4,7 @@
 
 export interface RequestOptions {
   body?: unknown;
-  /** Authorization token; resolved automatically from Supabase when omitted. */
+  /** Authorization token; resolved automatically from PocketBase when omitted. */
   token?: string | null;
   /** Attempts before giving up (default 3). */
   retries?: number;

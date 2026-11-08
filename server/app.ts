@@ -1,9 +1,15 @@
 /**
  * LensCraft AI — Express application factory.
  *
- * Single source of truth for middleware + API routes. Reused by:
- *   - server.ts     (local dev / standalone Node server, `npm start`)
- *   - api/index.ts  (Vercel serverless function)
+ * Used by:
+ *   - server.ts     (local dev / standalone Node server)
+ *   - functions/index.ts  (Cloudflare Pages Function)
+ *
+ * In Cloudflare Pages Functions mode (`pagesMode`):
+ *   • Static files are served by Pages itself (not express.static).
+ *   • No HTML5 history fallback — users navigate back from deep links manually.
+ *   • `serveStatic` flag controls whether the SPA fallback is attached (local
+ *     dev only).
  *
  * Keep this module free of top-level side effects other than dotenv loading.
  */
@@ -14,8 +20,9 @@ import helmet from 'helmet';
 import cors from 'cors';
 import { GoogleGenAI, Type } from '@google/genai';
 import type { Stripe } from 'stripe';
-import { env, isProduction, isSupabaseConfigured } from './env';
-import { consumeGenerationQuota, getSupabaseAdmin, QuotaError, TIER_LIMITS, type ProfileRow } from './supabase-admin';
+import { env, isProduction, isPocketBaseConfigured } from './env';
+import { jsonBody, rawBody } from './body';
+import { consumeGenerationQuota, getPocketBaseAdmin, verifyPocketBaseToken, QuotaError, TIER_LIMITS, type ProfileRow, type VerifiedUser } from './pocketbase-admin';
 import { rateLimit } from './rate-limit';
 import { STRIPE_TIERS, getStripe, isSupportedTier, toStripeAmount } from './stripe';
 import { generateStructuredJson, availableModels, currentProvider, listModels, providerCatalog } from './ai';
@@ -62,8 +69,8 @@ const isTransient = (error: any) => error?.status === 429 || error?.status === 5
 
 /**
  * Builds the Express application.
- * @param serveStatic attach the production static server + SPA fallback
- *                    (standalone Node only — Vercel serves dist/ itself).
+ * @param serveStatic reserved flag — kept for backwards compatibility with
+ *                    standalone Node (server.ts) that still attaches dist/.
  */
 export async function createApp({ serveStatic = false }: { serveStatic?: boolean } = {}) {
   const app = express();
@@ -72,8 +79,13 @@ export async function createApp({ serveStatic = false }: { serveStatic?: boolean
 
   // ------------------------------------------------------------ middleware (F3)
   const allowedOriginsForCsp = () =>
-    [env.appUrl, 'https://lenscraft.vercel.app', 'http://localhost:3000', 'http://127.0.0.1:3000']
-      .filter(Boolean);
+    [
+      env.appUrl,
+      'https://lenscraft.vercel.app',     // legacy Vercel URL
+      'https://*.pages.dev',              // Cloudflare Pages previews + prod
+      'http://localhost:3000',
+      'http://127.0.0.1:3000',
+    ].filter(Boolean);
 
   // A single, permissive-but-sane CSP. `'unsafe-eval'` / `'wasm-unsafe-eval'`
   // are required by @react-pdf/renderer (its font engine is loaded as WASM);
@@ -98,8 +110,12 @@ export async function createApp({ serveStatic = false }: { serveStatic?: boolean
   }));
 
   const allowedOrigins = new Set(
-    [env.appUrl, 'http://localhost:3000', 'http://127.0.0.1:3000', 'http://localhost:5173']
-      .filter(Boolean)
+    [
+      env.appUrl,
+      'http://localhost:3000',
+      'http://127.0.0.1:3000',
+      'http://localhost:5173',
+    ].filter(Boolean)
   );
 
   app.use(cors({
@@ -134,7 +150,7 @@ export async function createApp({ serveStatic = false }: { serveStatic?: boolean
 
   // Stripe webhook needs the RAW body for signature verification, so it is
   // mounted before the JSON body parser.
-  app.post('/api/webhook/stripe', express.raw({ type: 'application/json' }), async (req, res) => {
+  app.post('/api/webhook/stripe', rawBody('application/json', '50mb'), async (req, res) => {
     try {
       const stripe = getStripe();
       if (!stripe || !env.stripeWebhookSecret || env.stripeWebhookSecret.startsWith('MY_')) {
@@ -148,9 +164,9 @@ export async function createApp({ serveStatic = false }: { serveStatic?: boolean
         return res.status(400).json({ error: `Signature webhook invalide: ${err.message}` });
       }
 
-      const supabase = getSupabaseAdmin();
-      if (!supabase) {
-        return res.status(503).json({ error: 'Supabase n\'est pas configuré sur ce serveur.' });
+      const pocketbase = await getPocketBaseAdmin();
+      if (!pocketbase) {
+        return res.status(503).json({ error: 'PocketBase n\'est pas configuré sur ce serveur.' });
       }
 
       const tierForEvent = (eventType: string): ProfileRow['subscription_tier'] | null => {
@@ -173,11 +189,9 @@ export async function createApp({ serveStatic = false }: { serveStatic?: boolean
         const userId = session.client_reference_id || session.metadata?.userId;
         const tier = (session.metadata?.tier || 'pro') as ProfileRow['subscription_tier'];
         if (userId) {
-          const { error } = await supabase
-            .from('profiles')
-            .update({ subscription_tier: tier, updated_at: new Date().toISOString() })
-            .eq('id', userId);
-          if (error) console.error('Webhook: failed to update profile tier', error);
+          await pocketbase.collection('profiles').update(userId, {
+            subscription_tier: tier,
+          }).catch(error => console.error('Webhook: failed to update profile tier', error));
         }
       } else if (event.type === 'customer.subscription.updated' || event.type === 'customer.subscription.created') {
         const subscription = event.data.object as Stripe.Subscription;
@@ -187,11 +201,9 @@ export async function createApp({ serveStatic = false }: { serveStatic?: boolean
           ? false
           : subscription.status === 'canceled';
         if (userId) {
-          const { error } = await supabase
-            .from('profiles')
-            .update({ subscription_tier: canceled ? 'free' : tier, updated_at: new Date().toISOString() })
-            .eq('id', userId);
-          if (error) console.error('Webhook: failed to update subscription tier', error);
+          await pocketbase.collection('profiles').update(userId, {
+            subscription_tier: canceled ? 'free' : tier,
+          }).catch(error => console.error('Webhook: failed to update subscription tier', error));
         }
       } else {
         const tier = tierForEvent(event.type);
@@ -199,7 +211,9 @@ export async function createApp({ serveStatic = false }: { serveStatic?: boolean
           const subscription = event.data.object as Stripe.Subscription;
           const userId = subscription.metadata?.userId;
           if (userId) {
-            await supabase.from('profiles').update({ subscription_tier: 'free', updated_at: new Date().toISOString() }).eq('id', userId);
+            await pocketbase.collection('profiles').update(userId, {
+              subscription_tier: 'free',
+            }).catch(error => console.error('Webhook: failed to reset tier to free', error));
           }
         }
       }
@@ -211,14 +225,14 @@ export async function createApp({ serveStatic = false }: { serveStatic?: boolean
     }
   });
 
-  app.use(express.json({ limit: "50mb" }));
+  app.use(jsonBody('50mb'));
 
   // ---------------------------------------------------------------- health/SM-01
   app.get('/health', (_req, res) => {
     res.json({
       status: 'ok',
-      uptime: Math.round(process.uptime()),
-      mode: isSupabaseConfigured ? 'supabase' : 'local',
+      startedAt: Math.round(Date.now() / 1000), // Edge-runtime compatible; process.uptime() may be unavailable
+      mode: isPocketBaseConfigured ? 'pocketbase' : 'local',
       billing: Boolean(getStripe()),
       timestamp: new Date().toISOString(),
     });
@@ -235,7 +249,7 @@ export async function createApp({ serveStatic = false }: { serveStatic?: boolean
       models: availableModels(),
       currency: env.currency,
       billingEnabled: Boolean(getStripe()),
-      upgradeEnabled: !Boolean(getStripe()) || !isSupabaseConfigured,
+      upgradeEnabled: !Boolean(getStripe()) || !isPocketBaseConfigured,
       byokEnabled: true,
       providers: providerCatalog(),
     });
@@ -258,23 +272,23 @@ export async function createApp({ serveStatic = false }: { serveStatic?: boolean
 
   /**
    * Resolves the caller's user id (from the Authorization bearer token) and
-   * enforces the monthly generation quota (M2). Skips enforcement when Supabase
+   * enforces the monthly generation quota (M2). Skips enforcement when PocketBase
    * is not configured (local mode).
    */
   async function enforceQuota(req: express.Request): Promise<string | null> {
     const authHeader = req.headers.authorization || '';
     const token = authHeader.startsWith('Bearer ') ? authHeader.slice(7) : null;
-    const supabase = getSupabaseAdmin();
 
-    if (!supabase || !token) return null;
+    // Local mode (no PocketBase configured) skips enforcement entirely.
+    if (!isPocketBaseConfigured || !token) return null;
 
-    const { data, error } = await supabase.auth.getUser(token);
-    if (error || !data?.user) {
+    const user: VerifiedUser | null = await verifyPocketBaseToken(token);
+    if (!user) {
       throw Object.assign(new Error('Session expirée. Reconnectez-vous.'), { status: 401 });
     }
 
-    await consumeGenerationQuota(data.user.id);
-    return data.user.id;
+    await consumeGenerationQuota(user.id, user.email);
+    return user.id;
   }
 
   // ------------------------------------------------------ POST /api/generate
@@ -434,14 +448,9 @@ Modifie le JSON comme demandé (ou améliore-le si l'utilisateur le demande) ET 
       }
 
       const token = (req.headers.authorization || '').replace('Bearer ', '');
-      const supabase = getSupabaseAdmin();
-      if (!supabase || !token) {
+      const user = token ? await verifyPocketBaseToken(token) : null;
+      if (!user) {
         return res.status(401).json({ error: 'Connectez-vous pour souscrire à un abonnement.' });
-      }
-
-      const { data: userData, error: userError } = await supabase.auth.getUser(token);
-      if (userError || !userData?.user) {
-        return res.status(401).json({ error: 'Session expirée. Reconnectez-vous.' });
       }
 
       const tier = req.body?.tier;
@@ -468,9 +477,9 @@ Modifie le JSON comme demandé (ou améliore-le si l'utilisateur le demande) ET 
         line_items: lineItems,
         success_url: `${env.appUrl}/app?upgrade=success`,
         cancel_url: `${env.appUrl}/pricing?upgrade=cancelled`,
-        client_reference_id: userData.user.id,
-        customer_email: userData.user.email || undefined,
-        metadata: { userId: userData.user.id, tier },
+        client_reference_id: user.id,
+        customer_email: user.email || undefined,
+        metadata: { userId: user.id, tier },
       });
 
       res.json({ url: session.url });
@@ -483,15 +492,15 @@ Modifie le JSON comme demandé (ou améliore-le si l'utilisateur le demande) ET 
   // ----------------------------------------------- POST /api/upgrade (demo path)
   /**
    * Self-service plan change used while Stripe is not configured (local /
-   * preview deployments). When Stripe AND Supabase are both configured this
+   * preview deployments). When Stripe AND PocketBase are both configured this
    * endpoint is disabled so real payments cannot be bypassed.
    */
   app.post('/api/upgrade', apiLimiter, async (req, res) => {
     try {
       const stripe = getStripe();
-      const supabase = getSupabaseAdmin();
+      const pocketbase = await getPocketBaseAdmin();
 
-      if (stripe && supabase) {
+      if (stripe && pocketbase) {
         return res.status(409).json({
           error: 'Utilisez le paiement Stripe pour changer de plan.',
           checkout: true,
@@ -504,13 +513,9 @@ Modifie le JSON comme demandé (ou améliore-le si l'utilisateur le demande) ET 
 
       // Persist server-side when a database is available.
       const token = (req.headers.authorization || '').replace('Bearer ', '');
-      if (supabase && token) {
-        const { data: userData } = await supabase.auth.getUser(token);
-        if (userData?.user) {
-          await supabase.from('profiles')
-            .update({ subscription_tier: tier, updated_at: new Date().toISOString() })
-            .eq('id', userData.user.id);
-        }
+      const user = token ? await verifyPocketBaseToken(token) : null;
+      if (pocketbase && user) {
+        await pocketbase.collection('profiles').update(user.id, { subscription_tier: tier }).catch(() => undefined);
       }
 
       res.json({ tier, demo: true, limits: TIER_LIMITS[tier] });
@@ -565,6 +570,10 @@ Modifie le JSON comme demandé (ou améliore-le si l'utilisateur le demande) ET 
     res.status(404).json({ error: `Endpoint inconnu: ${req.method} ${req.originalUrl}` });
   });
 
+  // ------------------------------------------------------- Static / SPA serving
+  // Standalone Node only (server.ts passes serveStatic: isProduction).
+  // Cloudflare Workers serve ./dist through the `[assets]` binding instead, and
+  // Vercel serves dist/ itself — both call createApp({ serveStatic: false }).
   if (serveStatic) {
     const distPath = path.join(process.cwd(), 'dist');
     app.use(express.static(distPath, {
@@ -577,10 +586,6 @@ Modifie le JSON comme demandé (ou améliore-le si l'utilisateur le demande) ET 
       },
     }));
     app.get('*', (req, res) => {
-      // Never swallow API 404s into the SPA fallback.
-      if (req.path.startsWith('/api/')) {
-        return res.status(404).json({ error: 'Endpoint inconnu: ' + req.method + ' ' + req.path });
-      }
       res.sendFile(path.join(distPath, 'index.html'));
     });
   }
